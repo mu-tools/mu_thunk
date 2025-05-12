@@ -1,7 +1,7 @@
 /**
  * MIT License
  *
- * Copyright (c) 2021-2025 R. D. Poor <rdpoor@gmail.com>
+ * Copyright (c) 2025 R. D. Poor & Assoc <rdpoor @ gmail.com>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -10,24 +10,28 @@
  * copies of the Software, and to permit persons to whom the Software is
  * furnished to do so, subject to the following conditions:
  *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
  */
 
 /**
  * @file mu_thunk.h
- * @brief Minimal implementation for deferrable function execution.
+ *
+ * @brief Minimal deferrable execution unit: a thunk that carries only
+ *        its function pointer.  User context must be embedded in your
+ *        own struct as the first member.
  */
 
 #ifndef _MU_THUNK_H_
 #define _MU_THUNK_H_
-
-// *****************************************************************************
-// Includes
-
-#include <stdint.h>
-#include <stdbool.h>
 
 // *****************************************************************************
 // C++ Compatibility
@@ -40,84 +44,86 @@ extern "C" {
 // Public types and definitions
 
 /**
- * @struct mu_thunk_t
- * @brief Represents a minimal deferred execution unit.
- *
- * Contains only a function pointer and a user-supplied context.
+ * forward declaraton of struct _mu_thunk
  */
-typedef struct _mu_thunk mu_thunk_t;
+struct _mu_thunk;
 
 /**
  * @brief Function signature for a thunk.
  *
- * The function is executed with its associated thunk instance and optional arguments.
+ * The scheduler invokes `fn(thunk, args)`.  If you embed your `mu_thunk_t`
+ * as the first field of your own struct, you can cast `thunk` back to that
+ * enclosing type to access your context.
  *
- * @param[in] thunk Pointer to the thunk instance.
- * @param[in] args  Optional arguments for execution.
+ * @param thunk Pointer to the base `mu_thunk_t`, which must be at offset 0
+ *              of your enclosing struct.
+ * @param args  Optional arguments passed through `mu_thunk_call()`.
  */
-typedef void (*mu_thunk_fn)(mu_thunk_t *thunk, void *args);
+typedef void (*mu_thunk_fn)(struct _mu_thunk *thunk, void *args);
 
 /**
- * @struct mu_thunk_t
- * @brief Minimal thunk structure for deferred execution.
+ * @brief Opaque handle for a deferrable function call.
+ *
+ * This struct holds only the function pointer.  User context must be stored
+ * alongside in a containing struct where `mu_thunk_t` is the first member.
  */
-struct _mu_thunk {
-    mu_thunk_fn fn;   /**< Function to execute */
-    void *context;    /**< User-defined execution context */
-};
+typedef struct _mu_thunk {
+    mu_thunk_fn fn; /**< Thunk function to execute */
+} mu_thunk_t;
 
 /**
- * @brief Initializes a thunk inline.
+ * @brief Inline initializer for a thunk.
  *
- * This variant does not perform argument checking—call only from safe contexts.
+ * Does no parameter checking.  Use only when you know `thunk` and `fn`
+ * are both non-NULL.
  *
- * @param[in] thunk   Pointer to the thunk instance.
- * @param[in] fn      Function to associate with the thunk.
- * @param[in] context User-defined context for execution.
- * @return Pointer to the initialized thunk.
+ * @param thunk Pointer to the thunk instance.
+ * @param fn    Function to associate with the thunk.
+ * @return `thunk`
  */
-static inline mu_thunk_t *_mu_thunk_init(mu_thunk_t *thunk, mu_thunk_fn fn, void *context) {
+static inline mu_thunk_t *_mu_thunk_init(mu_thunk_t *thunk, mu_thunk_fn fn) {
     thunk->fn = fn;
-    thunk->context = context;
     return thunk;
 }
 
 /**
- * @brief Executes a thunk inline.
+ * @brief Inline invocation of a thunk.
  *
- * This variant does not perform argument checking—call only from safe contexts.
+ * Does no parameter checking.  Use only when you know `thunk` and
+ * `thunk->fn` are valid.
  *
- * @param[in] thunk Pointer to the thunk instance.
- * @param[in] args  Optional arguments for execution.
+ * @param thunk Pointer to the thunk instance.
+ * @param args  Optional arguments to pass through.
  */
 static inline void _mu_thunk_call(mu_thunk_t *thunk, void *args) {
     thunk->fn(thunk, args);
 }
 
-#define MU_THUNK_NULL ((mu_thunk_t){.fn=NULL, .context=NULL})
+/** A null thunk (fn set to NULL). */
+#define MU_THUNK_NULL ((mu_thunk_t){.fn = NULL})
 
 // *****************************************************************************
 // Public declarations
 
 /**
- * @brief Initializes a thunk.
+ * @brief Initialize a thunk.
  *
- * Assigns a function pointer and a context to the thunk instance, returning the initialized thunk.
+ * Must be called before scheduling or calling the thunk.
  *
- * @param[in] thunk   Pointer to the thunk instance to initialize.
- * @param[in] fn      Function to associate with the thunk.
- * @param[in] context User-defined context for execution.
- * @return Pointer to the initialized thunk, or NULL if invalid.
+ * @param thunk Pointer to your `mu_thunk_t` (must be non-NULL).
+ * @param fn    Function to invoke when `mu_thunk_call()` runs.
+ * @return `thunk` on success, or NULL if `thunk` or `fn` is NULL.
  */
-mu_thunk_t *mu_thunk_init(mu_thunk_t *thunk, mu_thunk_fn fn, void *context);
+mu_thunk_t *mu_thunk_init(mu_thunk_t *thunk, mu_thunk_fn fn);
 
 /**
- * @brief Executes a thunk.
+ * @brief Execute a thunk.
  *
- * Calls the stored function pointer with its associated context and optional arguments.
+ * Calls the stored function pointer with the thunk and provided `args`.
+ * If `thunk` or `thunk->fn` is NULL, this is a no-op.
  *
- * @param[in] thunk Pointer to the thunk instance.
- * @param[in] args  Optional arguments for execution.
+ * @param thunk Pointer to the initialized `mu_thunk_t`.
+ * @param args  Optional arguments to pass through.
  */
 void mu_thunk_call(mu_thunk_t *thunk, void *args);
 
